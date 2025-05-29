@@ -2,8 +2,17 @@
 # Automatically installs the dependencies, mostly as conda environments.
 # CombiSV is installed from its repository.
 # The workflow expects reference genome data in the reference_genome directory.
-# Input data are expected in kveik_sample* subdirectories
+# Input data are expected in kveik_sample*/ subdirectories.
 
+# Nanopore read files in fastq.gz format must be placed in kveik_sample*/fastq_pass/.
+# These can consist of a single or multiple files which will be merged.
+
+# Subdirectories must also contain 
+# paired end Illumina data in  kveik_sample*/illumina_reads/ subdirectories each.
+# Illumina data is used for posishing and QC and must consist of exactly ONE 
+# *R1*.fastq.gz and *R2*.fastq.gz file for each sample. As these files are used for 
+# polishing, they should be from the same sample as the nanopore sequences.
+# 
 configfile: "config/config.yaml"
 
 
@@ -14,7 +23,7 @@ def get_sample_directories(wildcards):
     prefix = "kveik_sample"
     return [d for d in os.listdir(".") if os.path.isdir(d) and d.startswith(prefix)]
 
-# Function to get all fastq files in the fastq directory. This is only relevant for Quast runs.
+# Function to get all ONT fastq files in the fastq directory. 
 def get_fastq_files(wildcards):
     fastq_dir = "{sample}/fastq_pass/"
     return [os.path.join(fastq_dir.format(sample=wildcards.sample), f) for f in os.listdir(fastq_dir.format(sample=wildcards.sample)) if f.endswith(".fastq.gz")]
@@ -31,7 +40,7 @@ def get_illumina_fastqs(wildcards):
     return [r1[0], r2[0]]
     
     
-# Function to get all fastq files in each fastq_pass directory
+# Function to get all fastq files. This is only relevant for Quast runs.
 def get_reference_fastas():
     ref_dir = "../reference_genome"
     return [fi for fi in os.listdir(ref_dir) if fi.endswith(".fna")]
