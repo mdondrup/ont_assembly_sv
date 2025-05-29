@@ -1,0 +1,6 @@
+sample_prefix: kveik_sample
+genomesize: 12000000
+use-conda: true
+conda-frontend: mamba
+cores: 60 
+reference: ../reference_genome/GCF_000146045.2_R64_genomic.fasta
