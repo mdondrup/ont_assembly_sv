@@ -1,5 +1,7 @@
 results/**
 input/**
+kveik_sample**
+reference_genome/**
 resources/**
 logs/**
 misc/**
