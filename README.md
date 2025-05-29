@@ -10,6 +10,6 @@ Dependencies are installed via conda environments.
 
 Directory layout:
 
-  -  <working_directory>/kveik_sample_N (sample directory)
-    -  fastq_pass/ (ONT passed reads in fastq.gz)
-    -  illumina_reads/ (paired end short reads for polishing)
+  -  <working_directory>/kveik_sample_N (sample directory)    
+     -  fastq_pass/ (ONT passed reads in fastq.gz)
+     -  illumina_reads/ (paired end short reads for polishing)
