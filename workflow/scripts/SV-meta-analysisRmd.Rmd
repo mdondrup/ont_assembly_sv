@@ -7,8 +7,15 @@ author: Michael Dondrup
 This notebook is a companion script for the structural variant analysis conducted with
 CombiSV. It is not integrated into the Snakemake workflow.
 
+To run it, copy the combisv files and the reference genome's GFF file (sequence files are not required) 
+into your working directory.
 
 This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Dependencies:
+  - Bioconductor: GenomicRanges
+  - Bioconductor: rtracklayer
+  - writexl (to export as an Excel file)
 
 Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
 
@@ -40,7 +47,7 @@ for (vcf in vcfs) {
 	ov <- findOverlaps (subject=annot,query=gsv)
 	feature.classes <- table(annot[subjectHits(ov),]$type)
 	full.ov <- cbind(svcf[queryHits(ov),], annot[subjectHits(ov),])
-	## ID is the only tag that is guranteed to exist
+	## ID is the only tag that is guaranteed to exist
   all.unique <-append(list(unique(full.ov$ID)),all.unique)
 	svcf.list <- append(list(gsv), svcf.list)
 
