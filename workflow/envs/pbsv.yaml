@@ -1,0 +1,6 @@
+name: pbsv
+channels:
+- bioconda
+dependencies:
+- pbsv=2.9.0=h9ee0642_0
+

@@ -1,0 +1,571 @@
+# Snakefile for assembly and SV analysis
+
+configfile: "config/config.yaml"
+
+
+import os
+import re
+
+def get_sample_directories(wildcards):
+    prefix = "kveik_sample"
+    return [d for d in os.listdir(".") if os.path.isdir(d) and d.startswith(prefix)]
+
+# Function to get all fastq files in each fastq_pass directory
+def get_fastq_files(wildcards):
+    fastq_dir = "{sample}/fastq_pass/"
+    return [os.path.join(fastq_dir.format(sample=wildcards.sample), f) for f in os.listdir(fastq_dir.format(sample=wildcards.sample)) if f.endswith(".fastq.gz")]
+
+# Function to get all fastq files in each fastq_pass directory
+def get_illumina_fastqs(wildcards):
+    fastq_dir = "{sample}/illumina_reads/"
+    r1 = [os.path.join(fastq_dir.format(sample=wildcards.sample), f) for f in os.listdir(fastq_dir.format(sample=wildcards.sample))
+                if (re.search(".*R1.*\.fastq\.gz$", f))]
+                
+    r2 = [os.path.join(fastq_dir.format(sample=wildcards.sample), f) for f in os.listdir(fastq_dir.format(sample=wildcards.sample))
+                if (re.search(".*R2.*\.fastq\.gz$", f))]
+            
+    return [r1[0], r2[0]]
+    
+    
+# Function to get all fastq files in each fastq_pass directory
+def get_reference_fastas():
+    ref_dir = "../reference_genome"
+    return [fi for fi in os.listdir(ref_dir) if fi.endswith(".fna")]
+               
+
+# Get the list of sample directories
+SAMPLES = get_sample_directories(None)
+REFS = get_reference_fastas()
+RAGTAGREF="/export/elixiruibfs/Elixir_Dolan/Kveik_Yeast_2024/reference_genome/Kveik.6.REFERENCE.fasta"
+
+REF_GFF="/export/elixiruibfs/Elixir_Dolan/Kveik_Yeast_2022/reference-genome/GCF_000146045.2_R64_genomic.gff.gz"
+#print ("Reference sequences found:")
+#print (REFS)
+# Define the data types
+#data_types = ["merged", "trimmed", "10kb", "20kb"]
+
+data_types = []
+algorithms = []
+data_types_polish = []
+## Don't polish everything
+#data_types_polish = ["trimmed", "10kb"]
+
+# Define the algorithms
+#algorithms = ["flye", "necat"]
+algorithms_scaffold = ['flye'] # select the best ones only
+data_types_scaffold = ["trimmed"] # select the best ones
+samples_scaffold = ["kveik_sample3_1c","kveik_sample7_1a",  "kveik_sample10_1a"]
+# If Sample 6 is the reference, so don't scaffold it again
+
+#SAM1, SUF1  = glob_wildcards('')
+#SAM2, SUF2  = glob_wildcards('{sample}/illumina_reads/{lib}R2{suf}.fastq.gz')
+
+
+rule all:    
+    input:
+        #asm=expand("{sample}/1-assembly/{algo}_{data}_assembly", sample=SAMPLES, data=data_types, algo=algorithms),
+        quast=expand("{sample}/3-metrics/{algo}_{data}--{refs}--quast",  sample=SAMPLES, data=data_types, algo=algorithms, refs=REFS ),
+        quast_pilon=expand("{sample}/3-metrics/{algo}_{data}--{refs}--pilon_quast",sample=SAMPLES, data=data_types_polish, algo=algorithms, refs=REFS),
+        r1trimmed=expand("{sample}/illumina_reads/trimmed.1.fastq.gz", sample=SAMPLES),
+        r2trimmed=expand("{sample}/illumina_reads/trimmed.2.fastq.gz", sample=SAMPLES),
+        fastphtml=expand("{sample}/illumina_reads/fastp_report.html", sample=SAMPLES),
+        fastpjson=expand("{sample}/illumina_reads/fastp_report.json", sample=SAMPLES),
+        bwt=expand("{sample}/1-assembly/{algo}_{data}_assembly/assembly.fasta.bwt",  sample=SAMPLES, data=data_types, algo=algorithms ),
+        bam=expand("{sample}/1-assembly/{algo}_{data}_assembly/fragments.bam",  sample=SAMPLES, data=data_types, algo=algorithms ),
+        pilon=expand("{sample}/2-polishing/{algo}_{data}_pilon/pilon.fasta",  sample=samples_scaffold, data=data_types_polish, algo=algorithms ),
+        ragtag=expand("{sample}/4-scaffolding/{algo}_{data}_pilon_ragtag/{sample}.assembly.final.fa",  sample=samples_scaffold, data=data_types_scaffold, algo=algorithms_scaffold ),
+        quast_final=expand("{sample}/5-final-metrics/{algo}_{data}--final_quast", sample=samples_scaffold, data=data_types_scaffold, algo=algorithms_scaffold),
+        busco_short_txt=expand("{sample}/5-final-metrics/{algo}_{data}--busco-genome/short_summary.txt", sample=samples_scaffold, data=data_types_scaffold, algo=algorithms_scaffold),      
+        #duplex="kveik_sample6_1a/flye_duplex_assembly/assembly.fasta",
+        
+
+rule SV:
+    input:
+        combisv_script="scripts/combiSV/combiSV2.2.pl",
+        combisv=expand("{sample}/{sample}_combisv.vcf", sample=SAMPLES)
+        
+rule scaffold:
+    input:
+        ragtag=expand("{sample}/4-scaffolding/{algo}_{data}_pilon_ragtag/{sample}.assembly.final.fa",  sample=samples_scaffold, data=data_types_scaffold, algo=algorithms_scaffold )
+        
+    
+
+rule merge_fastq:
+    input:
+        fastq=get_fastq_files
+    output:
+        "{sample}/{sample}_merged.fastq.gz"
+    shell:
+        """
+        set -x
+        cat {input.fastq} > {output}
+        """
+
+rule porechop:
+    input:
+        "{sample}/{sample}_merged.fastq.gz"
+    output:
+        "{sample}/{sample}_trimmed.fastq.gz"
+    conda:
+        "envs/porechop.yaml"  # Adjust with the path to your porechop conda environment file
+    threads: 30
+    shell:
+        """
+        porechop -t {threads} -i {input} -o {output}_dup
+        ## porechop may have created duplicated reads for whatever reason...
+        seqkit rmdup -d {output}_dup -D {output}.dup.detail.txt {output}_dup | pigz -p {threads} - > {output}
+        rm -f {output}_dup
+        """
+        
+### Sample6_1a is already trimmed        
+rule sample6_alt_preprocess:
+    input:
+        "kveik_sample6_1a/kveik_sample6_1a_merged.fastq.gz"
+    output:
+        "kveik_sample6_1a/kveik_sample6_1a_trimmed.fastq.gz"
+    
+    shell:
+        """
+        cp {input} {output}
+        
+        """
+        
+rule minimap2:
+    conda:
+        "envs/minimap.yaml" 
+    input:
+        "{sample}/{sample}_trimmed.fastq.gz"
+    output:
+        "{sample}/{sample}_trimmed.bam"
+    
+    threads: 30
+    shell:
+        """
+        samtools --version
+        minimap2 -ax map-ont -Y -R "@RG\\tID:{wildcards.sample}\\tPL:{wildcards.sample}\\tLB:LB1\\tSM:{wildcards.sample}" -t {threads} {config[reference]} {input} | samtools sort -@ 10 -o {output}
+        samtools index {output}
+ 
+        """
+
+rule cuteSV:
+    conda: "envs/cutesv.yaml"
+    input: "{sample}/{sample}_trimmed.bam"
+    output: "{sample}/{sample}_cuteSV.vcf"
+    threads: 30
+    shell:
+        """
+        mkdir -p {wildcards.sample}/cutesv-workdir
+        cuteSV --threads {threads} --batches 1000000 --sample {wildcards.sample} \
+        --max_cluster_bias_INS 100 \
+	--diff_ratio_merging_INS 0.3 \
+	--max_cluster_bias_DEL 100 \
+	--diff_ratio_merging_DEL 0.3 \
+        {input} {config[reference]} {output} {wildcards.sample}/cutesv-workdir
+
+        """
+rule sniffles:
+    conda: "envs/sniffles.yaml"
+    input: "{sample}/{sample}_trimmed.bam"
+    output: "{sample}/{sample}_sniffles.vcf"
+    threads: 30
+    shell:
+        """
+        sniffles --input {input} --reference {config[reference]} --vcf {output} --threads {threads}
+
+        """
+
+rule pbsv:
+    conda: "envs/pbsv.yaml"
+    input: "{sample}/{sample}_trimmed.bam"
+    output: "{sample}/{sample}_pbsv.vcf"
+    threads: 30
+    shell:
+        """
+        pbsv discover {input} {wildcards.sample}.svsig.gz
+        tabix -c '#' -s 3 -b 4 -e 4 {wildcards.sample}.svsig.gz
+        pbsv call {config[reference]} {wildcards.sample}.svsig.gz {output}
+
+        """
+        
+rule nanovar:
+    conda: "envs/nanovar.yaml"
+    input: "{sample}/{sample}_trimmed.bam"
+    output: "{sample}/{sample}_nanovar.vcf"
+    threads: 30
+    shell:
+        """
+        nanovar -x ont {input} {config[reference]} {wildcards.sample}/nanovar-wd
+        mv {wildcards.sample}/nanovar-wd/{wildcards.sample}_trimmed.nanovar.pass.vcf {output}
+
+        """
+rule svim:
+    conda: "envs/svim.yaml"
+    input: "{sample}/{sample}_trimmed.bam"
+    output: "{sample}/{sample}_svim.vcf"
+    threads: 30
+    shell:
+        """
+        svim alignment {wildcards.sample}/svim-wd {input} {config[reference]} 
+        mv {wildcards.sample}/svim-wd/variants.vcf {output}
+
+        """
+
+rule nanosv:
+    conda: "envs/nanosv.yaml"
+    input: "{sample}/{sample}_trimmed.bam"
+    output: "{sample}/{sample}_nanosv.vcf"
+    threads: 30
+    shell:
+        """
+      
+        ### turn off coverage support
+        echo -e "[Detection options]\n depth_support = False" > {wildcards.sample}/nanosv.ini
+
+        NanoSV -o {output} -t {threads} -c {wildcards.sample}/nanosv.ini  {input}
+
+        """        
+
+rule combisv_install:
+    conda: "envs/combisv.yaml"
+    output: "scripts/combiSV/combiSV2.2.pl"
+    shell:
+        """
+        mkdir -p scripts
+        cd scripts
+        rm -rf combiSV
+        git clone https://github.com/mdondrup/combiSV.git
+       # cd combiSV
+       # git checkout combiSV2.2
+        """
+
+rule combisv:
+    conda: "envs/combisv.yaml"
+    input: cutesv="{sample}/{sample}_cuteSV.vcf",
+           sniffles="{sample}/{sample}_sniffles.vcf",
+           pbsv="{sample}/{sample}_pbsv.vcf",
+           nanovar="{sample}/{sample}_nanovar.vcf",
+           svim="{sample}/{sample}_svim.vcf",
+           nanosv="{sample}/{sample}_nanosv.vcf"
+    output: "{sample}/{sample}_combisv.vcf"
+    shell:
+        """
+        perl scripts/combiSV/combiSV2.2.pl -pbsv {input.pbsv} -sniffles {input.sniffles} \
+        -cutesv {input.cutesv} -nanovar {input.nanovar} -svim {input.svim} -nanosv {input.nanosv} \
+        -c 2 -o {output}
+        """
+
+rule index_combisv:
+    conda: "envs/vcftools.yaml"
+    input: "{sample}/{sample}_combisv.vcf"
+    output:
+        vcf= "{sample}/{sample}_combisv.vcf.gz",
+        csi= "{sample}/{sample}_combisv.vcf.csi"
+    shell:
+        r"""
+        bgzip {input}
+        bcftools index {output}
+
+        """
+        
+            
+        
+rule filter_10kb:
+    input:
+        "{sample}/{sample}_trimmed.fastq.gz"
+    output:
+        "{sample}/{sample}_10kb.fastq.gz"
+    shell:
+        """
+        seqkit seq -m 10000 -o {output}  {input} 
+        """
+        
+rule filter_20kb:
+    input:
+        "{sample}/{sample}_10kb.fastq.gz"
+    output:
+        "{sample}/{sample}_20kb.fastq.gz"
+    shell:
+        """
+        seqkit seq -m 20000 -o {output} {input}
+        """
+
+# Use a single flye rule for all cases
+#for data_type in data_types:
+    
+rule:
+    name: "flye_{data_type}"
+    input:
+        "{sample}/{sample}_{data_type}.fastq.gz"
+    output:
+        "{sample}/1-assembly/flye_{data_type}_assembly/assembly.fasta"
+    conda:
+        "envs/flye.yaml"  # Adjust with the path to your flye conda environment file
+    params:
+        algo="flye"
+    threads: 30
+    shell:
+      """
+    # Replace this with the appropriate flye command based on your data and preference
+    # For example, you can customize the parameters as needed
+
+    mkdir -p $(dirname {output})
+    flye --nano-hq {input} --read-error 0.03 --genome-size {config[genomesize]} \
+    --out-dir $(dirname {output}) -i 4 -t {threads} --scaffold --no-alt-contigs
+      """
+
+rule flye_duplex:
+    input: "{sample}/duplex_calls_dorado/basecalled.fastq.gz"
+    output: "{sample}/flye_duplex_assembly/assembly.fasta"
+    conda:
+        "envs/flye.yaml"  # Adjust with the path to your flye conda environment file
+    params:
+        algo="flye",
+        read_error=0.01
+    threads: 30
+    shell:
+      """
+    # Replace this with the appropriate flye command based on your data and preference
+    # For example, you can customize the parameters as needed
+
+    mkdir -p $(dirname {output})
+    flye --nano-hq {input} --read-error {params.read_error} --genome-size {config[genomesize]} \
+    --out-dir $(dirname {output}) -i 4 -t {threads} --scaffold --no-alt-contigs
+      """
+        
+      
+
+
+      
+#for data_type in data_types:
+rule:
+    name: "necat_{data_type}"
+    input:
+        "{sample}/{sample}_{data_type}.fastq.gz"
+    output:
+        "{sample}/1-assembly/necat_{data_type}_assembly/assembly.fasta"
+        
+    conda: "envs/necat.yaml"
+           
+    threads: 30
+    shell:
+      """
+
+    mkdir -p $(dirname {output})
+    cd $(dirname {output})
+
+    necat config necat-config.txt
+
+    realpath ../../../{input} > ont_reads.txt;
+    WKD=necat-{data_type}-wkdir
+    sed -i 's|PROJECT=|PROJECT=necat-{data_type}-wkdir|' necat-config.txt;
+    sed -i 's|ONT_READ_LIST=|ONT_READ_LIST=ont_reads.txt|' necat-config.txt;
+    sed -i 's|GENOME_SIZE=|GENOME_SIZE={config[genomesize]}|' necat-config.txt;
+    sed -i 's|THREADS=4|THREADS={threads}|' necat-config.txt;
+    
+    necat correct necat-config.txt
+    necat assemble necat-config.txt
+    necat bridge necat-config.txt
+
+    
+    cp $WKD/6-bridge_contigs/polished_contigs.fasta ./assembly.fasta;
+      """
+
+
+#for sample in SAMPLES:
+for data_type in data_types:
+    for algo in algorithms:
+        for REF in REFS:
+            #print ("/3-metrics/"+algo+"_"+data_type+"_"+REF+"_quast")
+            rule:
+                conda: "envs/statkit.yaml"
+                name: "quast_fast_{algo}_{data_type}_{REF}"
+                input:
+                    asm="{sample}/1-assembly/{algo}_{data_type}_assembly/assembly.fasta",
+                    ref="../reference_genome/{REF}"
+                output: directory("{sample}/3-metrics/{algo}_{data_type}--{REF}--quast")
+                threads: 30
+                shell:
+                    """ 
+                mkdir -p {output}
+                quast  -r {input.ref} -t {threads} -l "{wildcards.sample}_{wildcards.algo}{wildcards.data_type}--{wildcards.REF}" -o {output} {input.asm}
+                
+                    """ 
+
+
+                    
+
+
+rule fastp_pe:
+	conda: "envs/fastp.yaml"
+	input:
+		r=get_illumina_fastqs
+	output:
+		r1="{sample}/illumina_reads/trimmed.1.fastq.gz", 
+		r2="{sample}/illumina_reads/trimmed.2.fastq.gz",
+		html="{sample}/illumina_reads/fastp_report.html",
+		json="{sample}/illumina_reads/fastp_report.json"
+	shell:
+		"""
+	fastp -i {input.r[0]} -I {input.r[1]} -o {output.r1} -O {output.r2} \
+	      -j {output.json} -h {output.html}
+
+		"""
+
+
+rule bwa_index:
+	conda: "envs/bwasam.yaml"
+	input:
+	    "{sample}/1-assembly/{asm}/assembly.fasta"
+	output:
+	    "{sample}/1-assembly/{asm}/assembly.fasta.bwt"
+
+	shell: 
+		"""
+	bwa index {input}
+		"""
+
+
+
+rule bwa_mem:
+	conda: "envs/bwasam.yaml"
+	input:
+		r1="{sample}/illumina_reads/trimmed.1.fastq.gz",
+		r2="{sample}/illumina_reads/trimmed.2.fastq.gz",
+		ref="{sample}/1-assembly/{asm}/assembly.fasta",
+		bwt="{sample}/1-assembly/{asm}/assembly.fasta.bwt"
+
+	output:
+		bam="{sample}/1-assembly/{asm}/fragments.bam",
+		bai="{sample}/1-assembly/{asm}/fragments.bam.bai"
+	threads: 30
+	shell: 
+		"""
+	bwa mem -t{threads} {input.ref} {input.r1} {input.r2} | samtools sort -@ 10 -o {output.bam} -
+	samtools index {output.bam}
+		"""
+
+rule pilon:
+        conda: "envs/pilon.yaml"
+        input: asm="{sample}/1-assembly/{algo}_{data}_assembly/assembly.fasta",
+               frag="{sample}/1-assembly/{algo}_{data}_assembly/fragments.bam",
+        output: asm="{sample}/2-polishing/{algo}_{data}_pilon/pilon.fasta"
+        threads: 30
+        resources:
+            mem_mb=256000         
+        shell: 
+                """
+                mkdir -p $(dirname {output.asm})
+	        pilon -Xmx255g --changes --fix all,breaks --minqual 25 --genome {input.asm} --frags {input.frag} --outdir $(dirname {output.asm})
+                """
+
+
+rule ragtag_scaffold:
+    conda: "envs/ragtag.yaml"
+    input: asm="{sample}/2-polishing/{algo}_{data}_pilon/pilon.fasta",
+           ref=RAGTAGREF
+    output: "{sample}/4-scaffolding/{algo}_{data}_pilon_ragtag/{sample}.assembly.final.fa"
+    threads: 30
+    log: "logs/ragtag-{sample}-{algo}-{data}.log"
+    message: "running RagTag scaffold for {wildcards.sample}"
+    shell:
+        r"""
+        mkdir -p  $(dirname {output} )
+        ragtag_scaffold.py -t {threads} --aligner nucmer -o $(dirname {output})   {input.asm} {input.ref} ## > {log} 2>&1
+        ## rename the scaffolds with the name from the agp file
+        cd  $(dirname {output})
+        perl -lpe 'BEGIN {{ %new = map {{ chomp; (split /\t/)[0,5]; }} `cat ragtag.scaffold.agp`; }} s/^>(\S+)/>$new{{$1}} $1/' ragtag.scaffold.fasta > $(basename {output})
+        
+        #mv -v $(dirname {output})/ragtag.scaffold.fasta {output} 
+        
+        """
+             
+
+rule quast_final:
+    conda: "envs/quast_busco.yaml"
+    input:
+        asm="{sample}/4-scaffolding/{algo}_{data}_pilon_ragtag/{sample}.assembly.final.fa",
+        ref=config['reference'],
+        pe1="{sample}/illumina_reads/trimmed.1.fastq.gz",
+        pe2="{sample}/illumina_reads/trimmed.2.fastq.gz",
+        nanopore="{sample}/{sample}_{data}.fastq.gz"
+    output: directory("{sample}/5-final-metrics/{algo}_{data}--final_quast")
+    threads: 60
+    message: "Running Quast on {wildcards.sample}.assembly.final.fa. Also running BUSCO and mapping reads back but SV detection is disabled."
+    log: "logs/{sample}_{algo}_{data}-quast.log"
+    shell:
+         """ 
+    mkdir -p {output}
+    quast  -r {input.ref} -t {threads} \
+        --fungus \
+        --gene-finding \
+        --conserved-genes-finding \
+         --no-sv \
+        --pe1 {input.pe1} \
+        --pe2 {input.pe2} \
+        --nanopore {input.nanopore} \
+        -l "{wildcards.sample}_{wildcards.algo}{wildcards.data}--final" \
+        -o {output} {input.asm} > {log} 2>&1
+    
+         """              
+
+
+rule run_busco_genome_saccharomycetaceae_odb12:
+    input:
+        "{sample}/4-scaffolding/{algo}_{data}_pilon_ragtag/{sample}.assembly.final.fa",
+    output:
+        short_json="{sample}/5-final-metrics/{algo}_{data}--busco-genome/short_summary.json",
+        short_txt="{sample}/5-final-metrics/{algo}_{data}--busco-genome/short_summary.txt",
+        full_table="{sample}/5-final-metrics/{algo}_{data}--busco-genome/full_table.tsv",
+        miss_list="{sample}/5-final-metrics/{algo}_{data}--busco-genome/busco_missing.tsv",
+        dataset_dir=directory("resources/{sample}__{algo}__{data}__busco_downloads"),
+    log:
+        "logs/{sample}_{algo}_{data}-busco-genome.log",
+    params:
+        mode="genome",
+        lineage="saccharomycetaceae_odb12",
+        # optional parameters
+        extra="",
+    threads: 40
+    wrapper:
+        "v5.8.3/bio/busco"
+                
+rule quast_pilon:
+    conda: "envs/statkit.yaml"
+    
+    input:
+        asm="{sample}/2-polishing/{algo}_{data_type}_pilon/pilon.fasta",
+        ref="../reference_genome/{REF}"
+    output: directory("{sample}/3-metrics/{algo}_{data_type}--{REF}--pilon_quast")
+    threads: 30
+    shell:
+         """ 
+    mkdir -p {output}
+    quast  -r {input.ref} -t {threads} -l "{wildcards.sample}_{wildcards.algo}{wildcards.data_type}--{wildcards.REF}--pilon" -o {output} {input.asm}
+    
+         """ 
+
+
+rule clean_quast:
+    params:
+        quast=expand("{sample}/3-metrics/{algo}_{data}--{refs}--quast",  sample=SAMPLES, data=data_types, algo=algorithms, refs=REFS ),
+        quast_pilon=expand("{sample}/3-metrics/{algo}_{data}--{refs}--pilon_quast",sample=SAMPLES, data=data_types_polish, algo=algorithms, refs=REFS)
+
+    shell:
+        """
+        rm -rf {params.quast} {params.quast_pilon}
+        """
+
+POLISH = ["quast","pilon_quast"]        
+
+rule quast_collate:
+    input: expand("{sample}/3-metrics/{algo}_{data}--{refs}--{polish}",  sample=SAMPLES, data=data_types_polish, algo=algorithms, refs=REFS, polish=POLISH)
+    output: "all_assembly_comparison.tsv"
+    shell:
+        """
+        head -n1 {input[0]}/transposed_report.tsv > {output}
+        for D in {input}
+        do
+           tail -n1 $D/transposed_report.tsv >> {output}
+        done
+
+        """
