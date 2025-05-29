@@ -1,4 +1,6 @@
-# Snakefile for assembly and SV analysis
+# Snakefile for assembly and Structural Variant (SV) analysis with combisv
+# Automatically installs the dependencies, mostly as conda environments.
+# CombiSV is installed from its repository.
 
 configfile: "config/config.yaml"
 
