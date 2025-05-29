@@ -1,7 +1,18 @@
 # Snakefile for assembly and Structural Variant (SV) analysis with combisv
 # Automatically installs the dependencies, mostly as conda environments.
 # CombiSV is installed from its repository.
+# The workflow expects reference genome data in the reference_genome directory.
+# Input data are expected in kveik_sample*/ subdirectories.
 
+# Nanopore read files in fastq.gz format must be placed in kveik_sample*/fastq_pass/.
+# These can consist of a single or multiple files which will be merged.
+
+# Subdirectories must also contain 
+# paired end Illumina data in  kveik_sample*/illumina_reads/ subdirectories each.
+# Illumina data is used for posishing and QC and must consist of exactly ONE 
+# *R1*.fastq.gz and *R2*.fastq.gz file for each sample. As these files are used for 
+# polishing, they should be from the same sample as the nanopore sequences.
+# 
 configfile: "config/config.yaml"
 
 
@@ -12,12 +23,12 @@ def get_sample_directories(wildcards):
     prefix = "kveik_sample"
     return [d for d in os.listdir(".") if os.path.isdir(d) and d.startswith(prefix)]
 
-# Function to get all fastq files in each fastq_pass directory
+# Function to get all ONT fastq files in the fastq directory. 
 def get_fastq_files(wildcards):
     fastq_dir = "{sample}/fastq_pass/"
     return [os.path.join(fastq_dir.format(sample=wildcards.sample), f) for f in os.listdir(fastq_dir.format(sample=wildcards.sample)) if f.endswith(".fastq.gz")]
 
-# Function to get all fastq files in each fastq_pass directory
+# Function to get all fastq files in each illumina_reads directory
 def get_illumina_fastqs(wildcards):
     fastq_dir = "{sample}/illumina_reads/"
     r1 = [os.path.join(fastq_dir.format(sample=wildcards.sample), f) for f in os.listdir(fastq_dir.format(sample=wildcards.sample))
@@ -29,7 +40,7 @@ def get_illumina_fastqs(wildcards):
     return [r1[0], r2[0]]
     
     
-# Function to get all fastq files in each fastq_pass directory
+# Function to get all fastq files. This is only relevant for Quast runs.
 def get_reference_fastas():
     ref_dir = "../reference_genome"
     return [fi for fi in os.listdir(ref_dir) if fi.endswith(".fna")]
@@ -38,26 +49,27 @@ def get_reference_fastas():
 # Get the list of sample directories
 SAMPLES = get_sample_directories(None)
 REFS = get_reference_fastas()
-RAGTAGREF="/export/elixiruibfs/Elixir_Dolan/Kveik_Yeast_2024/reference_genome/Kveik.6.REFERENCE.fasta"
-
-REF_GFF="/export/elixiruibfs/Elixir_Dolan/Kveik_Yeast_2022/reference-genome/GCF_000146045.2_R64_genomic.gff.gz"
-#print ("Reference sequences found:")
-#print (REFS)
+# Set reference for RagTag in config file
+RAGTAGREF=config[ragtagreference]
+# Reference GFF for Quast
+REF_GFF=config[refgff]
+print ("Reference sequences found:")
+print (REFS)
 # Define the data types
 #data_types = ["merged", "trimmed", "10kb", "20kb"]
 
 data_types = []
-algorithms = []
+algorithms = [] # 
 data_types_polish = []
 ## Don't polish everything
 #data_types_polish = ["trimmed", "10kb"]
 
 # Define the algorithms
-#algorithms = ["flye", "necat"]
-algorithms_scaffold = ['flye'] # select the best ones only
-data_types_scaffold = ["trimmed"] # select the best ones
+#algorithms = ["flye", "necat"] # necat was only included for evaluation
+algorithms_scaffold = ['flye'] # select the best algorithms to scaffold their output
+data_types_scaffold = ["trimmed"] # select the best data types to scaffold only
 samples_scaffold = ["kveik_sample3_1c","kveik_sample7_1a",  "kveik_sample10_1a"]
-# If Sample 6 is the reference, so don't scaffold it again
+# Sample 6 is the reference to scaffold all other samples to, don't scaffold it again
 
 #SAM1, SUF1  = glob_wildcards('')
 #SAM2, SUF2  = glob_wildcards('{sample}/illumina_reads/{lib}R2{suf}.fastq.gz')
@@ -524,7 +536,7 @@ rule run_busco_genome_saccharomycetaceae_odb12:
         "logs/{sample}_{algo}_{data}-busco-genome.log",
     params:
         mode="genome",
-        lineage="saccharomycetaceae_odb12",
+        lineage=config[buscolineage],
         # optional parameters
         extra="",
     threads: 40
