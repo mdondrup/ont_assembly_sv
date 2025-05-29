@@ -1,0 +1,141 @@
+---
+title: "SV meta analysis"
+output: html_notebook
+author: Michael Dondrup
+---
+
+This notebook is a companion script for the structural variant analysis conducted with
+CombiSV. It is not integrated into the Snakemake workflow.
+
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+
+```{r}
+library(GenomicRanges)
+library(rtracklayer)
+library(writexl)
+
+vcfs <- list.files('./', pattern="simplified_kveik_sample.*_combisv.vcf", full.names = T)
+gff <- './GCF_000146045.2_R64_genomic.gff.gz'
+```
+
+```{r}
+annot <- import.gff3(gff)
+```
+
+```{r}
+
+all.unique<-list()
+svcf.list <- list()
+
+for (vcf in vcfs) {
+	svcf <- read.delim(vcf, com='#', header=F, colClasses = c('character'))
+	svcf <- svcf[svcf$V3 != '.',]
+	gsv <- GRanges(seqnames = svcf$V1, ranges = IRanges(start = as.numeric(svcf$V2), width = as.numeric(svcf$V3)), type=svcf$V4)
+							 
+	ov <- findOverlaps (subject=annot,query=gsv)
+	feature.classes <- table(annot[subjectHits(ov),]$type)
+	full.ov <- cbind(svcf[queryHits(ov),], annot[subjectHits(ov),])
+	## ID is the only tag that is guranteed to exist
+  all.unique <-append(list(unique(full.ov$ID)),all.unique)
+	svcf.list <- append(list(gsv), svcf.list)
+
+}
+
+common.sv.genes <- Reduce(intersect, all.unique)
+common.sv.genes <- common.sv.genes[!is.na(common.sv.genes)]
+
+common.sv.annot <- as.data.frame(annot[annot$ID %in% common.sv.genes,])
+
+df.counts <- data.frame(table(as.character(common.sv.annot$type)))
+names(df.counts) <- c("Feature type","Frequency")
+
+df.counts <- df.counts[order(df.counts$Frequency, decreasing = T),]
+write.table(df.counts, file = "./feature.counts.tsv")
+```
+Types of regions affected by at least one SV (irrespective of (INS/DEL/INV)) in all four strains.
+
+All regions affected by an SV:
+```{r}
+common.sv.annot <- as.data.frame(annot[annot$ID %in% common.sv.genes,])
+common.sv.annot$Dbxref <- sapply(common.sv.annot$Dbxref, function(x) {paste(unlist(x), collapse = ';')})
+common.sv.text <- as.data.frame(apply(common.sv.annot, 2, function(x) {paste(x)}))
+common.sv.text[common.sv.text =="character(0)"] <- ""
+View(common.sv.text)
+library(writexl)
+write_xlsx(common.sv.text, path="./SV-common-genes.xlsx")
+#tables written with write.table are not parsed properly by Excel 
+
+```
+Now calculate the number of INS/DEL with coverage >= 3:
+
+```{r}
+gr.del <- GRanges()
+tmp <- lapply(svcf.list, function(x) {gr.del <<- c(x[x$type == "DEL"], gr.del)})
+gr.ins <- GRanges()
+tmp <- lapply(svcf.list, function(x) {gr.ins <<- c(x[x$type == "INS"], gr.ins)})
+#gr.ins
+#gr.del
+
+
+# Create logical RleList: positions with coverage >= 3
+del.coverage <- coverage(gr.del) >= 3
+ins.coverage <- coverage(gr.ins) >= 3
+
+# Filter: keep only runs of TRUE that are at least 50 bp
+filter_runs <- function(rle_obj, min_len = 50) {
+  rl <- runLength(rle_obj)
+  rv <- runValue(rle_obj)
+
+  # Only keep TRUE runs that are long enough
+  keep <- rv & rl >= min_len
+
+  # Set short TRUE runs to FALSE
+  rv[!keep & rv] <- FALSE
+
+  Rle(rv, rl)
+}
+
+# Apply to each chromosome
+del.coverage <- endoapply(del.coverage, filter_runs, min_len = 50)
+ins.coverage <- endoapply(ins.coverage, filter_runs, min_len = 50)
+
+count_true_runs <- function(rle_obj) {
+  sum(runValue(rle_obj))  # Counts how many TRUE runs
+}
+
+# Apply to each chromosome
+true_run_counts.del <- sapply(del.coverage, count_true_runs)
+true_run_counts.ins <- sapply(ins.coverage, count_true_runs)
+
+# View result
+sum(true_run_counts.del)
+sum(true_run_counts.ins)
+
+# number of TRUE values per chromsome
+print("number of deletions")
+
+sum(sum(runValue(del.coverage)))
+(runLength(del.coverage[del.coverage]))
+min(min(runLength(del.coverage)))
+# Total number of Deletions regions with coverage >= 3
+
+
+# Total number of Insertions regions with coverage > 3
+print("number of insertions")
+sum(sum(runValue(ins.coverage)))
+min(runLength(ins.coverage))
+min(min(runLength(ins.coverage)))
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
