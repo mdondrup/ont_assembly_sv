@@ -12,12 +12,12 @@ def get_sample_directories(wildcards):
     prefix = "kveik_sample"
     return [d for d in os.listdir(".") if os.path.isdir(d) and d.startswith(prefix)]
 
-# Function to get all fastq files in each fastq_pass directory
+# Function to get all fastq files in the reference fastq directory. This is only relevant for Quast runs.
 def get_fastq_files(wildcards):
     fastq_dir = "{sample}/fastq_pass/"
     return [os.path.join(fastq_dir.format(sample=wildcards.sample), f) for f in os.listdir(fastq_dir.format(sample=wildcards.sample)) if f.endswith(".fastq.gz")]
 
-# Function to get all fastq files in each fastq_pass directory
+# Function to get all fastq files in each illumina_reads directory
 def get_illumina_fastqs(wildcards):
     fastq_dir = "{sample}/illumina_reads/"
     r1 = [os.path.join(fastq_dir.format(sample=wildcards.sample), f) for f in os.listdir(fastq_dir.format(sample=wildcards.sample))
