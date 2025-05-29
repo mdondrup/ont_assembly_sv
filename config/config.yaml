@@ -4,3 +4,6 @@ use-conda: true
 conda-frontend: mamba
 cores: 60 
 reference: ../reference_genome/GCF_000146045.2_R64_genomic.fasta
+refgff: ../reference-genome/GCF_000146045.2_R64_genomic.gff.gz
+ragtagreference: ../reference_genome/Kveik.6.REFERENCE.fasta
+buscolineage: saccharomycetaceae_odb12
